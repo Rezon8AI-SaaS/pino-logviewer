@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pino Log Viewer</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161a22;
+    --panel-2: #1d2230;
+    --border: #2a3040;
+    --text: #e6e8ee;
+    --muted: #8a94a7;
+    --accent: #4aa3ff;
+    --trace: #6b7280;
+    --debug: #38bdf8;
+    --info: #22c55e;
+    --warn: #f59e0b;
+    --error: #ef4444;
+    --fatal: #ff3b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  .toolbar {
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel-2);
+  }
+  .toolbar input[type="text"], .toolbar select {
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 8px; border-radius: 6px; font: inherit;
+  }
+  .toolbar input[type="text"] { min-width: 220px; }
+  .toolbar button {
+    background: var(--accent); color: #001224; border: 0; border-radius: 6px;
+    padding: 6px 12px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  .toolbar button.secondary { background: var(--panel); color: var(--text); border: 1px solid var(--border); }
+  .toolbar button:hover { filter: brightness(1.1); }
+  .toolbar .spacer { flex: 1; }
+  .toolbar label { color: var(--muted); display: inline-flex; gap: 6px; align-items: center; }
+
+  main { flex: 1; display: grid; grid-template-rows: auto 1fr; min-height: 0; }
+  .paste-area { padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  .paste-area textarea {
+    width: 100%; min-height: 90px; max-height: 240px; resize: vertical;
+    background: var(--bg); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px; font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .results { overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  thead th {
+    position: sticky; top: 0; background: var(--panel-2); text-align: left;
+    border-bottom: 1px solid var(--border); padding: 8px 10px; font-weight: 600; color: var(--muted);
+    font-size: 12px; white-space: nowrap;
+  }
+  tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; }
+  tbody tr:hover { background: #1a1f2b; }
+  tbody td { padding: 6px 10px; vertical-align: top; }
+  td.time { white-space: nowrap; color: var(--muted); font: 12px ui-monospace, monospace; }
+  td.level { white-space: nowrap; font-weight: 700; font-size: 11px; letter-spacing: 0.5px; }
+  td.trace { font: 12px ui-monospace, monospace; color: var(--muted); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  td.trace a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  td.trace a:hover { text-decoration: underline; }
+  td.msg { font: 12.5px ui-monospace, monospace; word-break: break-word; }
+
+  tr.lvl-trace td.level { color: var(--trace); }
+  tr.lvl-debug td.level { color: var(--debug); }
+  tr.lvl-info  td.level { color: var(--info); }
+  tr.lvl-warn  td.level { color: var(--warn); }
+  tr.lvl-warn  { background: rgba(245, 158, 11, 0.06); }
+  tr.lvl-error td.level { color: var(--error); }
+  tr.lvl-error { background: rgba(239, 68, 68, 0.09); }
+  tr.lvl-fatal td.level { color: var(--fatal); }
+  tr.lvl-fatal { background: rgba(255, 59, 107, 0.14); }
+  tr.lvl-unknown td.level { color: var(--muted); }
+
+  tr.detail td { background: #0b0d12; padding: 10px 14px 14px 38px; cursor: default; }
+  .json-viewer { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+  .json-viewer .k { color: #9cdcfe; }
+  .json-viewer .s { color: #ce9178; }
+  .json-viewer .n { color: #b5cea8; }
+  .json-viewer .b { color: #569cd6; }
+  .json-viewer .nl { color: #808080; }
+  .json-viewer .err { color: var(--error); }
+  .stack { margin-top: 8px; background: #12151c; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border); white-space: pre-wrap; font: 12px ui-monospace, monospace; color: #ffb4b4; }
+
+  .empty {
+    padding: 40px 20px; text-align: center; color: var(--muted);
+  }
+  .badge {
+    display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 2px 8px; color: var(--muted); font-size: 11px; margin-left: 4px;
+  }
+  .expand-caret { display: inline-block; width: 12px; color: var(--muted); margin-right: 6px; transition: transform 120ms; }
+  tr.open .expand-caret { transform: rotate(90deg); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pino Log Viewer</h1>
+  <span class="meta">Paste pino NDJSON or Azure Container Apps log-stream output below — parsed in-browser</span>
+</header>
+
+<div class="paste-area">
+  <textarea id="input" placeholder='Paste pino NDJSON or Azure Container Apps log output, e.g.&#10;{"level":30,"time":1700000000000,"msg":"server started","pid":1}&#10;2026-04-23T09:03:10.1854061Z stdout F {"level":30,"time":1776934990184,"msg":"listening","name":"app"}&#10;2026-04-23T09:03:11.0077182Z stdout F GET /startupz 200 3.573 ms - 2'></textarea>
+</div>
+
+<div class="toolbar">
+  <button id="parseBtn">Parse</button>
+  <button id="clearBtn" class="secondary">Clear</button>
+  <label>Level ≥
+    <select id="minLevel">
+      <option value="10">trace</option>
+      <option value="20">debug</option>
+      <option value="30" selected>info</option>
+      <option value="40">warn</option>
+      <option value="50">error</option>
+      <option value="60">fatal</option>
+    </select>
+  </label>
+  <input type="text" id="filter" placeholder="Filter text (msg, trace id, any field)…">
+  <span class="spacer"></span>
+  <span id="stats" class="meta"></span>
+</div>
+
+<main>
+  <div class="results" id="results">
+    <div class="empty">No logs yet. Paste some NDJSON and hit Parse.</div>
+  </div>
+</main>
+
+<script>
+  const LEVEL_NAMES = { 10: 'TRACE', 20: 'DEBUG', 30: 'INFO', 40: 'WARN', 50: 'ERROR', 60: 'FATAL' };
+  const LEVEL_CLASS = { 10: 'trace', 20: 'debug', 30: 'info', 40: 'warn', 50: 'error', 60: 'fatal' };
+
+  const els = {
+    input: document.getElementById('input'),
+    parseBtn: document.getElementById('parseBtn'),
+    clearBtn: document.getElementById('clearBtn'),
+    minLevel: document.getElementById('minLevel'),
+    filter: document.getElementById('filter'),
+    results: document.getElementById('results'),
+    stats: document.getElementById('stats'),
+  };
+
+  let logs = [];
+
+  // Azure Container Apps log-stream prefix: "<ISO-timestamp> <stdout|stderr> <F|P> <payload>"
+  // e.g. "2026-04-23T09:03:10.1854061Z stdout F {...}"
+  const ACA_PREFIX = /^(\S+Z)\s+(stdout|stderr)\s+([FP])\s+([\s\S]*)$/;
+  // Loose leading-timestamp fallback for lines like the ACA "Connecting to..." banners
+  const LEADING_TS = /^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?)\s+(.*)$/;
+
+  function parseLine(line, i) {
+    if (!line || !line.trim()) return null;
+
+    let outerTime = null;
+    let stream = null;
+    let content = line;
+
+    const aca = line.match(ACA_PREFIX);
+    if (aca) {
+      outerTime = aca[1];
+      stream = aca[2];
+      content = aca[4];
+    } else {
+      const ts = line.match(LEADING_TS);
+      if (ts) {
+        outerTime = ts[1];
+        content = ts[2];
+      }
+    }
+
+    const trimmed = content.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const obj = JSON.parse(trimmed);
+        if (obj && typeof obj === 'object') {
+          if (outerTime != null && obj.time == null) obj.time = outerTime;
+          if (stream) obj.__stream = stream;
+          obj.__i = i;
+          return obj;
+        }
+      } catch (e) { /* fall through to raw */ }
+    }
+
+    const obj = { msg: content, __i: i, __raw: true };
+    if (outerTime != null) obj.time = outerTime;
+    if (stream === 'stderr') obj.level = 50;
+    else if (stream === 'stdout') obj.level = 30;
+    else obj.level = 'unknown';
+    if (stream) obj.__stream = stream;
+    return obj;
+  }
+
+  function parsePinoLogs(raw) {
+    if (!raw) return [];
+    return raw.split(/\r?\n/).map((line, i) => parseLine(line, i)).filter(Boolean);
+  }
+
+  function levelName(lvl) {
+    if (typeof lvl === 'number') return LEVEL_NAMES[lvl] || String(lvl);
+    return String(lvl || '').toUpperCase();
+  }
+  function levelClass(lvl) {
+    if (typeof lvl === 'number') return LEVEL_CLASS[lvl] || 'unknown';
+    return 'unknown';
+  }
+  function formatTime(t) {
+    if (t == null) return '';
+    const d = typeof t === 'number' ? new Date(t) : new Date(String(t));
+    if (isNaN(d.getTime())) return String(t);
+    return d.toISOString().replace('T', ' ').replace('Z', '');
+  }
+  function getTraceId(log) {
+    return log.traceId || log.trace_id || log.traceID || log.trace || log.requestId || log.reqId || '';
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function renderJson(obj) {
+    const json = JSON.stringify(obj, null, 2);
+    const html = escapeHtml(json)
+      .replace(/(&quot;[^&]*?&quot;)(\s*:\s*)/g, '<span class="k">$1</span>$2')
+      .replace(/:\s*(&quot;[\s\S]*?&quot;)/g, ': <span class="s">$1</span>')
+      .replace(/:\s*(-?\d+\.?\d*(e[+-]?\d+)?)/gi, ': <span class="n">$1</span>')
+      .replace(/:\s*(true|false|null)\b/g, ': <span class="b">$1</span>');
+    return '<div class="json-viewer">' + html + '</div>';
+  }
+
+  function extractStack(log) {
+    if (log.err && typeof log.err === 'object' && log.err.stack) return log.err.stack;
+    if (log.error && typeof log.error === 'object' && log.error.stack) return log.error.stack;
+    if (typeof log.stack === 'string') return log.stack;
+    return null;
+  }
+
+  function matches(log, minLevel, q) {
+    const lvl = typeof log.level === 'number' ? log.level : -1;
+    if (lvl !== -1 && lvl < minLevel) return false;
+    if (!q) return true;
+    const hay = JSON.stringify(log).toLowerCase();
+    return hay.includes(q);
+  }
+
+  function render() {
+    const minLevel = parseInt(els.minLevel.value, 10);
+    const q = els.filter.value.trim().toLowerCase();
+    const filtered = logs.filter(l => matches(l, minLevel, q));
+
+    if (logs.length === 0) {
+      els.results.innerHTML = '<div class="empty">No logs yet. Paste some NDJSON and hit Parse.</div>';
+      els.stats.textContent = '';
+      return;
+    }
+    els.stats.textContent = `${filtered.length} / ${logs.length} shown`;
+
+    if (filtered.length === 0) {
+      els.results.innerHTML = '<div class="empty">No logs match the current filter.</div>';
+      return;
+    }
+
+    const rows = filtered.map(log => {
+      const cls = levelClass(log.level);
+      const lvlName = levelName(log.level);
+      const time = formatTime(log.time);
+      const traceId = getTraceId(log);
+      const msg = log.msg != null ? String(log.msg) : '';
+      const traceCell = traceId
+        ? `<a data-trace="${escapeHtml(traceId)}" title="Filter by this trace id">${escapeHtml(traceId)}</a>`
+        : '';
+      const extras = [];
+      if (log.name) extras.push(`<span class="badge">${escapeHtml(log.name)}</span>`);
+      if (log.pid) extras.push(`<span class="badge">pid ${escapeHtml(log.pid)}</span>`);
+      if (log.__stream) extras.push(`<span class="badge">${escapeHtml(log.__stream)}</span>`);
+      if (log.__raw) extras.push(`<span class="badge">raw</span>`);
+      return `
+        <tr class="row lvl-${cls}" data-i="${log.__i}">
+          <td class="time">${escapeHtml(time)}</td>
+          <td class="level">${escapeHtml(lvlName)}</td>
+          <td class="trace">${traceCell}</td>
+          <td class="msg"><span class="expand-caret">▶</span>${escapeHtml(msg)} ${extras.join(' ')}</td>
+        </tr>`;
+    }).join('');
+
+    els.results.innerHTML = `
+      <table>
+        <thead>
+          <tr><th style="width:180px">Time</th><th style="width:70px">Level</th><th style="width:140px">Trace ID</th><th>Message</th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+
+    els.results.querySelectorAll('tr.row').forEach(tr => {
+      tr.addEventListener('click', (e) => {
+        if (e.target.closest('a[data-trace]')) return;
+        toggleDetail(tr);
+      });
+    });
+    els.results.querySelectorAll('a[data-trace]').forEach(a => {
+      a.addEventListener('click', (e) => {
+        e.stopPropagation();
+        els.filter.value = a.getAttribute('data-trace');
+        render();
+      });
+    });
+  }
+
+  function toggleDetail(tr) {
+    const next = tr.nextElementSibling;
+    if (next && next.classList.contains('detail')) {
+      next.remove();
+      tr.classList.remove('open');
+      return;
+    }
+    const i = parseInt(tr.getAttribute('data-i'), 10);
+    const log = logs.find(l => l.__i === i);
+    const clean = {};
+    for (const k of Object.keys(log)) {
+      if (!k.startsWith('__')) clean[k] = log[k];
+    }
+    const stack = extractStack(log);
+    const detail = document.createElement('tr');
+    detail.className = 'detail';
+    detail.innerHTML = `<td colspan="4">
+      ${renderJson(clean)}
+      ${stack ? `<div class="stack">${escapeHtml(stack)}</div>` : ''}
+    </td>`;
+    tr.classList.add('open');
+    tr.after(detail);
+  }
+
+  els.parseBtn.addEventListener('click', () => {
+    logs = parsePinoLogs(els.input.value);
+    render();
+  });
+  els.clearBtn.addEventListener('click', () => {
+    els.input.value = '';
+    logs = [];
+    render();
+  });
+  els.minLevel.addEventListener('change', render);
+  els.filter.addEventListener('input', render);
+
+  els.input.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      els.parseBtn.click();
+    }
+  });
+</script>
+</body>
+</html>
